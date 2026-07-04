@@ -1,0 +1,82 @@
+{
+  "spoken": [
+    {
+      "label": "Auto-detect",
+      "code": "auto"
+    },
+    {
+      "label": "English",
+      "code": "en"
+    },
+    {
+      "label": "Russian",
+      "code": "ru"
+    },
+    {
+      "label": "Hebrew",
+      "code": "he"
+    },
+    {
+      "label": "German",
+      "code": "de"
+    },
+    {
+      "label": "French",
+      "code": "fr"
+    },
+    {
+      "label": "Spanish",
+      "code": "es"
+    }
+  ],
+  "translate_targets": [
+    {
+      "label": "English",
+      "code": "en"
+    },
+    {
+      "label": "Russian",
+      "code": "ru"
+    },
+    {
+      "label": "Hebrew",
+      "code": "he"
+    },
+    {
+      "label": "German",
+      "code": "de"
+    },
+    {
+      "label": "French",
+      "code": "fr"
+    },
+    {
+      "label": "Spanish",
+      "code": "es"
+    },
+    {
+      "label": "Ukrainian",
+      "code": "uk"
+    }
+  ],
+  "flores_codes": {
+    "en": "eng_Latn",
+    "ru": "rus_Cyrl",
+    "he": "heb_Hebr",
+    "de": "deu_Latn",
+    "fr": "fra_Latn",
+    "es": "spa_Latn",
+    "it": "ita_Latn",
+    "pt": "por_Latn",
+    "pl": "pol_Latn",
+    "uk": "ukr_Cyrl",
+    "nl": "nld_Latn",
+    "tr": "tur_Latn",
+    "ar": "arb_Arab",
+    "zh": "zho_Hans",
+    "ja": "jpn_Jpan",
+    "ko": "kor_Hang",
+    "cs": "ces_Latn",
+    "sv": "swe_Latn"
+  }
+}

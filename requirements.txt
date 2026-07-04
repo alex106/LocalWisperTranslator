@@ -1,0 +1,15 @@
+# Fully-local offline dictation app (Wispr-style)
+faster-whisper>=1.0.3   # CTranslate2 Whisper inference (GPU int8_float16)
+sounddevice>=0.4.6      # microphone capture
+numpy>=1.24             # audio buffers
+keyboard>=0.13.5        # global hotkey + Ctrl+V + fallback typing
+pyperclip>=1.8.2        # clipboard get/set for paste strategy
+pystray>=0.19.5         # system tray icon
+Pillow>=10.0            # tray icon image
+transformers>=4.40      # NLLB tokenizer (no torch needed)
+
+# --- GPU (NVIDIA CUDA 12) runtime DLLs, Windows wheels ---
+# Provide cublas64_12.dll / cudnn DLLs that CTranslate2 needs at runtime.
+# Registered on the DLL search path by src/cuda_setup.py.
+nvidia-cublas-cu12      # cuBLAS (cublas64_12.dll)
+nvidia-cudnn-cu12       # cuDNN 9 for CUDA 12

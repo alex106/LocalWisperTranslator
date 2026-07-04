@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+models/
+config.json
+wisper.log
+build/
+dist/
+*.spec
