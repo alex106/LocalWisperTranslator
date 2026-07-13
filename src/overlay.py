@@ -30,6 +30,11 @@ BG = "#1e1f24"
 BAR_COLOR = "#e05555"
 IDLE_BAR = "#3a3c44"
 PROC_COLOR = "#e0a83a"  # amber scanner while transcribing (matches tray icon)
+TRANSLATE_COLOR = "#4fa8e0"  # blue scanner while translating
+STAGE_LABELS = {
+    "transcribing": "⏳  Transcribing…",
+    "translating": "🌐  Translating…",
+}
 TICK_MS = 40  # waveform refresh (25 fps)
 
 
@@ -42,13 +47,15 @@ def _force_foreground(hwnd: int) -> bool:
 
 
 class WaveformOverlay:
-    """Owns the Tk mainloop. show()/processing()/hide()/quit() are thread-safe."""
+    """Owns the Tk mainloop. show()/processing()/set_stage()/hide()/quit()
+    are thread-safe."""
 
     def __init__(self, recorder):
         self.recorder = recorder
         self._cmds: queue.Queue = queue.Queue()
         self._levels = collections.deque([0.0] * BARS, maxlen=BARS)
         self._mode = "hidden"  # "hidden" | "recording" | "processing"
+        self._stage = "transcribing"  # sub-state while "processing": transcribing | translating
         self._phase = 0        # animation phase counter for the scanner
         self._prev_hwnd: int | None = None
 
@@ -80,6 +87,11 @@ class WaveformOverlay:
         keep an animated 'transcribing' panel on screen until hide()."""
         self._cmds.put("processing")
 
+    def set_stage(self, stage: str):
+        """Switch the label/color shown during processing (e.g. "translating"
+        once transcription hands off to NLLB). No-op outside processing."""
+        self._cmds.put(("stage", stage))
+
     def hide(self):
         """Called from the hotkey thread when recording stops."""
         self._cmds.put("hide")
@@ -96,7 +108,9 @@ class WaveformOverlay:
         try:
             while True:
                 cmd = self._cmds.get_nowait()
-                if cmd == "show":
+                if isinstance(cmd, tuple) and cmd[0] == "stage":
+                    self._do_set_stage(cmd[1])
+                elif cmd == "show":
                     self._do_show()
                 elif cmd == "processing":
                     self._do_processing()
@@ -132,12 +146,19 @@ class WaveformOverlay:
         if self._mode != "recording":
             return
         self._mode = "processing"
+        self._stage = "transcribing"
         restored = False
         if self._prev_hwnd:
             restored = _force_foreground(self._prev_hwnd)
         self._prev_hwnd = None  # focus already handed back; hide won't re-grab
         log.info("overlay processing (focus restored=%s)", restored)
         # _tick keeps running (mode != "hidden"); no need to restart it.
+
+    def _do_set_stage(self, stage: str):
+        if self._mode != "processing" or stage not in STAGE_LABELS:
+            return
+        self._stage = stage
+        log.info("overlay stage=%s", stage)
 
     def _do_hide(self):
         if self._mode == "hidden":
@@ -185,11 +206,14 @@ class WaveformOverlay:
                                fill=color, outline="")
 
     def _draw_processing(self):
-        """A travelling amber wave across the bars so it's obvious work is
-        still happening while Whisper transcribes."""
+        """A travelling colored wave across the bars so it's obvious work is
+        still happening; color/label reflect the current stage (transcribing
+        vs translating) so the two phases are visually distinct."""
         c = self.canvas
         c.delete("all")
-        c.create_text(WIDTH // 2, 14, text="⏳  Transcribing…",
+        color = PROC_COLOR if self._stage == "transcribing" else TRANSLATE_COLOR
+        label = STAGE_LABELS[self._stage]
+        c.create_text(WIDTH // 2, 14, text=label,
                       fill="#c9cad1", font=("Segoe UI", 9))
         mid = HEIGHT // 2 + 12
         span = (HEIGHT - 36) / 2
@@ -201,6 +225,6 @@ class WaveformOverlay:
             wob = 0.5 + 0.5 * math.sin(i * 0.11 - t * 0.6)
             h = max(2.0, span * (0.15 + 0.85 * env * wob))
             x = i * bar_w + bar_w * 0.25
-            color = PROC_COLOR if env * wob > 0.15 else IDLE_BAR
+            bar_color = color if env * wob > 0.15 else IDLE_BAR
             c.create_rectangle(x, mid - h, x + bar_w * 0.5, mid + h,
-                               fill=color, outline="")
+                               fill=bar_color, outline="")

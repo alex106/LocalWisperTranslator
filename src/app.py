@@ -142,6 +142,8 @@ class App:
                 log.info("transcribed %d chars (lang=%s): %r",
                          len(text), lang, text[:120])
                 if text and self.cfg.translate:
+                    if self.cfg.show_overlay:
+                        self.overlay.set_stage("translating")
                     translated = self.translator.translate(
                         text, lang, self.cfg.translate_to)
                     log.info("translated %s->%s: %r", lang,
