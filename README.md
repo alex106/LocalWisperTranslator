@@ -28,6 +28,14 @@ focus. Powered by [faster-whisper] (`large-v3`) on your GPU and
 > The NLLB translator deliberately runs on **CPU int8** (~600 MB RAM) so it
 > never competes with Whisper for VRAM.
 
+> **CPU vs GPU:** set `device: "cpu"` if no CUDA GPU is available, but expect
+> it to be noticeably slower — `large-v3` on CPU can run 5–15×+ slower than
+> the GPU path above. If you need a CPU fallback, pair it with a smaller
+> model (`small` or `base`) rather than `large-v3`: CPU int8 on those sizes
+> gets close to realtime, at the cost of more transcription errors (more so
+> on accented speech, background noise, or less common languages). Default
+> to `cuda` whenever a GPU is available.
+
 ## Setup
 
 ```powershell
@@ -182,6 +190,13 @@ Wisper/
 - **First syllable clipped:** recording starts before the beep plays, so this
   shouldn't happen — if it does, check `wisper.log` for delayed
   `recording started` timestamps.
+- **Switching `model` in the tray does nothing if `model_dir` is pinned:**
+  when `model_dir` is set (as in this checkout, to `models\large-v3`), that
+  exact folder is always loaded regardless of which size you pick in the
+  tray. To actually switch sizes, download the weights for that size first
+  (`scripts\download_model.py medium`, etc.) and either clear `model_dir` in
+  `config.json` (falls back to the Hugging Face cache) or repoint it at the
+  new folder.
 
 [faster-whisper]: https://github.com/SYSTRAN/faster-whisper
 [NLLB-200]: https://huggingface.co/entai2965/nllb-200-distilled-600M-ctranslate2
