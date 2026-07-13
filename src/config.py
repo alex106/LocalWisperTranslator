@@ -19,6 +19,7 @@ DEFAULTS = {
     "model": "large-v3",          # "large-v3" | "medium" | ...
     "device": "cuda",             # "cuda" | "cpu"
     "compute_type": "int8_float16",  # fits large-v3 in ~2GB VRAM on 4GB GPUs
+    "beam_size": 2,               # decoding beam width; 1=fastest, 5=most accurate
     "model_dir": None,            # local path for fully-offline weights; None = HF cache
     "local_files_only": False,    # True forces offline (no HF download)
     "output_mode": "paste",       # "paste" (clipboard+Ctrl+V) | "type" (keystrokes)

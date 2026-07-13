@@ -1,8 +1,10 @@
 """Recording overlay: a borderless always-on-top panel with a live waveform.
 
 Shown while the push-to-talk hotkey is held. It takes keyboard focus so
-stray keypresses don't reach the target app, and restores focus to the
-previously active window when hidden (before the transcript is pasted).
+stray keypresses don't reach the target app. When recording stops it enters
+a "processing" mode: focus returns to the previously active window right
+away (before the transcript is pasted) while the panel stays visible with a
+transcribing animation until hidden.
 
 Tk objects must live on one thread, so the overlay owns the main thread's
 mainloop and other threads talk to it through a command queue.
@@ -12,6 +14,7 @@ from __future__ import annotations
 import collections
 import ctypes
 import logging
+import math
 import queue
 import tkinter as tk
 
@@ -26,6 +29,7 @@ BARS = 64
 BG = "#1e1f24"
 BAR_COLOR = "#e05555"
 IDLE_BAR = "#3a3c44"
+PROC_COLOR = "#e0a83a"  # amber scanner while transcribing (matches tray icon)
 TICK_MS = 40  # waveform refresh (25 fps)
 
 
@@ -38,13 +42,14 @@ def _force_foreground(hwnd: int) -> bool:
 
 
 class WaveformOverlay:
-    """Owns the Tk mainloop. show()/hide()/quit() are thread-safe."""
+    """Owns the Tk mainloop. show()/processing()/hide()/quit() are thread-safe."""
 
     def __init__(self, recorder):
         self.recorder = recorder
         self._cmds: queue.Queue = queue.Queue()
         self._levels = collections.deque([0.0] * BARS, maxlen=BARS)
-        self._visible = False
+        self._mode = "hidden"  # "hidden" | "recording" | "processing"
+        self._phase = 0        # animation phase counter for the scanner
         self._prev_hwnd: int | None = None
 
         self.root = tk.Tk()
@@ -70,6 +75,11 @@ class WaveformOverlay:
         """Called from the hotkey thread when recording starts."""
         self._cmds.put("show")
 
+    def processing(self):
+        """Called when recording stops: hand focus back to the target app but
+        keep an animated 'transcribing' panel on screen until hide()."""
+        self._cmds.put("processing")
+
     def hide(self):
         """Called from the hotkey thread when recording stops."""
         self._cmds.put("hide")
@@ -88,6 +98,8 @@ class WaveformOverlay:
                 cmd = self._cmds.get_nowait()
                 if cmd == "show":
                     self._do_show()
+                elif cmd == "processing":
+                    self._do_processing()
                 elif cmd == "hide":
                     self._do_hide()
                 elif cmd == "quit":
@@ -98,9 +110,9 @@ class WaveformOverlay:
         self.root.after(30, self._poll_cmds)
 
     def _do_show(self):
-        if self._visible:
+        if self._mode != "hidden":
             return
-        self._visible = True
+        self._mode = "recording"
         self._levels.extend([0.0] * BARS)
         # Remember where the user was typing so we can send focus back.
         self._prev_hwnd = user32.GetForegroundWindow()
@@ -113,26 +125,48 @@ class WaveformOverlay:
                  took, self._prev_hwnd)
         self._tick()
 
-    def _do_hide(self):
-        if not self._visible:
+    def _do_processing(self):
+        # Only meaningful as a transition out of recording. Give keyboard focus
+        # back to the target app now (so the upcoming Ctrl+V lands there) but
+        # keep the panel visible and animated until _do_hide.
+        if self._mode != "recording":
             return
-        self._visible = False
-        self.root.withdraw()
+        self._mode = "processing"
         restored = False
         if self._prev_hwnd:
+            restored = _force_foreground(self._prev_hwnd)
+        self._prev_hwnd = None  # focus already handed back; hide won't re-grab
+        log.info("overlay processing (focus restored=%s)", restored)
+        # _tick keeps running (mode != "hidden"); no need to restart it.
+
+    def _do_hide(self):
+        if self._mode == "hidden":
+            return
+        self._mode = "hidden"
+        self.root.withdraw()
+        restored = False
+        if self._prev_hwnd:  # only set if we never went through processing
             restored = _force_foreground(self._prev_hwnd)
         log.info("overlay hidden (focus restored=%s)", restored)
         self._prev_hwnd = None
 
     # ---------------------------------------------------------- waveform
     def _tick(self):
-        if not self._visible:
+        if self._mode == "hidden":
             return
-        self._levels.append(self.recorder.last_rms)
+        self._phase += 1
+        if self._mode == "recording":
+            self._levels.append(self.recorder.last_rms)
         self._draw()
         self.root.after(TICK_MS, self._tick)
 
     def _draw(self):
+        if self._mode == "processing":
+            self._draw_processing()
+        else:
+            self._draw_recording()
+
+    def _draw_recording(self):
         c = self.canvas
         c.delete("all")
         c.create_text(WIDTH // 2, 14, text="●  Recording — release to transcribe",
@@ -147,5 +181,26 @@ class WaveformOverlay:
             h = max(2.0, lvl * scale)
             x = i * bar_w + bar_w * 0.25
             color = BAR_COLOR if lvl > 0.003 else IDLE_BAR
+            c.create_rectangle(x, mid - h, x + bar_w * 0.5, mid + h,
+                               fill=color, outline="")
+
+    def _draw_processing(self):
+        """A travelling amber wave across the bars so it's obvious work is
+        still happening while Whisper transcribes."""
+        c = self.canvas
+        c.delete("all")
+        c.create_text(WIDTH // 2, 14, text="⏳  Transcribing…",
+                      fill="#c9cad1", font=("Segoe UI", 9))
+        mid = HEIGHT // 2 + 12
+        span = (HEIGHT - 36) / 2
+        bar_w = WIDTH / BARS
+        t = self._phase * 0.35
+        for i in range(BARS):
+            # Two offset sines give a lively, non-repetitive travelling wave.
+            env = 0.5 + 0.5 * math.sin(i * 0.30 - t)
+            wob = 0.5 + 0.5 * math.sin(i * 0.11 - t * 0.6)
+            h = max(2.0, span * (0.15 + 0.85 * env * wob))
+            x = i * bar_w + bar_w * 0.25
+            color = PROC_COLOR if env * wob > 0.15 else IDLE_BAR
             c.create_rectangle(x, mid - h, x + bar_w * 0.5, mid + h,
                                fill=color, outline="")

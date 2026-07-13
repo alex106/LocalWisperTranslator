@@ -6,12 +6,16 @@ maps to Whisper auto-detection.
 """
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 import cuda_setup  # noqa: F401  # registers NVIDIA DLL dirs before ct2 loads
 from faster_whisper import WhisperModel
 
 from config import Config
+
+log = logging.getLogger("wisper")
 
 
 class Transcriber:
@@ -39,6 +43,20 @@ class Transcriber:
             local_files_only=self.cfg.local_files_only,
         )
         self._loaded_key = self._key()
+        self._warmup()
+
+    def _warmup(self):
+        """Run one dummy inference so CUDA/cuDNN kernels are compiled before
+        the user's first dictation (otherwise the first clip pays several
+        seconds of cold-start). Best-effort: must never break startup."""
+        try:
+            silence = np.zeros(16000, dtype=np.float32)  # 1s @ 16 kHz
+            segments, _ = self.model.transcribe(
+                silence, beam_size=1, vad_filter=False)
+            list(segments)  # force the lazy generator to actually run
+            log.info("warmup complete")
+        except Exception:
+            log.exception("warmup failed (non-fatal)")
 
     def transcribe(self, audio: np.ndarray) -> tuple[str, str]:
         """Return (text, detected_language_iso). Empty text if too short."""
@@ -55,7 +73,7 @@ class Transcriber:
             audio,
             language=language,
             vad_filter=True,
-            beam_size=5,
+            beam_size=self.cfg.beam_size,
         )
         text = "".join(seg.text for seg in segments).strip()
         return text, info.language

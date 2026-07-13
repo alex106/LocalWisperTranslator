@@ -127,7 +127,9 @@ class App:
         audio = self.recorder.stop()
         log.info("recording stopped: %.2fs of audio", audio.size / 16000.0)
         if self.cfg.show_overlay:
-            self.overlay.hide()  # restores focus to the target window
+            # Hand focus back to the target window now, but keep an animated
+            # "transcribing" panel up until _process finishes.
+            self.overlay.processing()
         if self.cfg.beep_on_record:
             _beep(560, 90)
         self._set_state("transcribing", "Wisper - transcribing...")
@@ -152,6 +154,8 @@ class App:
                 log.exception("transcription failed")
                 self.icon.notify(f"Transcription error: {exc}", "Wisper")
             finally:
+                if self.cfg.show_overlay:
+                    self.overlay.hide()  # dismiss the transcribing animation
                 self._set_state("idle", self._idle_tip())
 
     def _idle_tip(self) -> str:
@@ -286,6 +290,13 @@ class App:
             self.icon.notify(f"Failed to load model: {exc}", "Wisper")
             self._set_state("loading", "Wisper - model load failed")
             return
+        # Preload the CPU translator now (if enabled) so the first translated
+        # dictation doesn't pay the ~5s NLLB load mid-utterance.
+        if self.cfg.translate and self.translator.available:
+            try:
+                self.translator._ensure_loaded()
+            except Exception:
+                log.exception("NLLB preload failed (non-fatal)")
         self.ptt = PushToTalk(self.cfg.hotkey, self.on_press, self.on_release)
         self.ptt.start()
         log.info("ready: hotkey=%s language=%s", self.cfg.hotkey, self.cfg.language)
