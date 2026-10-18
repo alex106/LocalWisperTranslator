@@ -3,7 +3,8 @@
 
 Windows: create .venv and pip install -r requirements.txt.
 Linux: system packages, input-group access for hold-to-talk, a venv,
-models, a desktop entry, and the ydotoold user service.
+models, and a desktop entry. A ydotoold user service is added only when
+that binary exists. Ubuntu 22.04's ydotool has no separate daemon.
 
     python install.py                 # Linux also downloads models
     python install.py --skip-models   # Linux: skip the weight download
@@ -12,7 +13,6 @@ models, a desktop entry, and the ydotoold user service.
 from __future__ import annotations
 
 import argparse
-import grp
 import os
 import shutil
 import subprocess
@@ -33,6 +33,8 @@ LINUX_PACKAGES = [
     "wl-clipboard",
     "ydotool",
     "libcanberra-gtk3-0",
+    # GNOME draws the tray menu only through this extension.
+    "gnome-shell-extension-appindicator",
 ]
 
 UINPUT_RULE = (
@@ -152,12 +154,34 @@ def _desktop_entry(py: Path, socket: str) -> str:
     )
 
 
-def _in_input_group() -> bool:
+def _enable_tray_extension() -> None:
+    """Turn on Ubuntu's AppIndicator extension when the session can see it."""
+    if not shutil.which("gnome-extensions"):
+        return
+    ext = "ubuntu-appindicators@ubuntu.com"
     try:
-        gid = grp.getgrnam("input").gr_gid
-    except KeyError:
-        return False
-    return gid in os.getgroups()
+        enabled = subprocess.check_output(
+            ["gnome-extensions", "list", "--enabled"], text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return
+    if ext in enabled.split():
+        return
+    subprocess.run(["gnome-extensions", "enable", ext], check=False)
+
+
+def _remove_missing_ydotoold_unit() -> None:
+    """Drop a unit left by an older installer that pointed at a missing binary."""
+    unit = Path.home() / ".config" / "systemd" / "user" / "wisper-ydotoold.service"
+    if not unit.exists():
+        return
+    subprocess.run(
+        ["systemctl", "--user", "disable", "--now", "wisper-ydotoold.service"],
+        check=False,
+    )
+    unit.unlink()
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
 
 
 def install_linux(args: argparse.Namespace) -> None:
@@ -202,20 +226,24 @@ def install_linux(args: argparse.Namespace) -> None:
         write_fresh_config()
         print(f"Wrote {CONFIG_LINUX_PATH}")
 
-    unit_text, socket = _ydotoold_unit()
-    unit_dir = Path.home() / ".config" / "systemd" / "user"
-    unit_dir.mkdir(parents=True, exist_ok=True)
-    unit_path = unit_dir / "wisper-ydotoold.service"
-    unit_path.write_text(unit_text, encoding="utf-8")
-    try:
-        run(["systemctl", "--user", "daemon-reload"])
-        # enable only. --now would crash-loop: this login is not in the
-        # input group yet, so ydotoold cannot open /dev/uinput until the
-        # next session.
-        run(["systemctl", "--user", "enable", "wisper-ydotoold.service"])
-    except subprocess.CalledProcessError:
-        print("Could not start the ydotoold user service in this session.")
-        print(f"After you log in again it will start from {unit_path}")
+    if shutil.which("ydotoold"):
+        unit_text, socket = _ydotoold_unit()
+        unit_dir = Path.home() / ".config" / "systemd" / "user"
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        unit_path = unit_dir / "wisper-ydotoold.service"
+        unit_path.write_text(unit_text, encoding="utf-8")
+        try:
+            run(["systemctl", "--user", "daemon-reload"])
+            run(["systemctl", "--user", "enable", "wisper-ydotoold.service"])
+        except subprocess.CalledProcessError:
+            print("Could not enable the ydotoold user service in this session.")
+            print(f"After you log in again it will start from {unit_path}")
+    else:
+        socket = "/tmp/.ydotool_socket"
+        _remove_missing_ydotoold_unit()
+        print("This ydotool build has no separate daemon; the app opens /dev/uinput itself.")
+
+    _enable_tray_extension()
 
     desktop = _desktop_entry(py, socket)
     app_dir = Path.home() / ".local" / "share" / "applications"
@@ -234,15 +262,10 @@ def install_linux(args: argparse.Namespace) -> None:
     if args.skip_models:
         print("Models were skipped. Dictation will fail until you download them.")
     print()
-    print("Log out and back in before holding the hotkey.")
-    print("Hold-to-talk reads /dev/input, and membership of the input group")
-    print("applies only in a new login. That group can read every keystroke")
-    print("on this machine, which is what a global hold-key needs.")
-    if _in_input_group():
-        print("This session already has the input group; a new login is still")
-        print("required if udev just changed /dev/uinput.")
-    else:
-        print("This session is not in the input group yet.")
+    print("Open Wisper from the application menu and hold Ctrl+Alt+Space.")
+    print("The menu is the green circle in the top bar.")
+    print("Wisper joins the input group itself, so a new login is not required.")
+    print("That group can read every keystroke, which a global hold-key needs.")
 
 
 def main():

@@ -47,12 +47,12 @@ python3 install.py
 
 The installer detects the OS. On Linux it installs the system packages, creates
 `.venv`, downloads a Whisper model plus NLLB, and adds an application-menu
-entry and an autostart entry. Log out and back in once afterwards. Hold-to-talk
-reads `/dev/input`, and the `input` group is only present in a new login. That
-group can read every keystroke on the machine, which is what a global hold-key
-needs.
+entry and an autostart entry. Wisper joins the `input` group itself when it
+starts, so a new login is not required. That group can read every keystroke
+on the machine, which is what a global hold-key needs.
 
-Launch Wisper from the application menu and hold `Ctrl+Alt+Space`. With no
+Launch Wisper from the application menu. The settings menu is the green circle
+in the top bar. Hold `Ctrl+Alt+Space`. With no
 NVIDIA GPU the installer selects CPU `int8` and the `small` model. A CUDA GPU
 keeps `large-v3` at `int8_float16`. Linux settings are stored in
 `config.linux.json`, separate from the Windows `config.json`.

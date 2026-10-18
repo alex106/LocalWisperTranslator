@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -22,6 +25,33 @@ SRC = ROOT / "src"
 # linux/ must win over src/ so hotkey, output, and overlay are the Linux ones.
 sys.path.insert(0, str(SRC))
 sys.path.insert(0, str(LINUX))
+
+
+def _reexec_with_input_group() -> None:
+    """Reading the keyboard needs the input group.
+
+    A GNOME login can keep the group list from the first time this user
+    service started. Logging out does not refresh it when that service is
+    still running. sg starts this same program with the group applied.
+    """
+    if os.environ.get("WISPER_INPUT_GROUP") == "1":
+        return
+    try:
+        import grp
+        info = grp.getgrnam("input")
+    except KeyError:
+        return
+    if info.gr_gid in os.getgroups():
+        os.environ["WISPER_INPUT_GROUP"] = "1"
+        return
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    if user not in info.gr_mem or not shutil.which("sg"):
+        return
+    os.environ["WISPER_INPUT_GROUP"] = "1"
+    os.execvp("sg", ["sg", "input", "-c", shlex.join([sys.executable, *sys.argv])])
+
+
+_reexec_with_input_group()
 
 LOG_PATH = ROOT / "wisper-linux.log"
 logging.basicConfig(
@@ -40,6 +70,30 @@ if _cfg.device == "cuda":
 
 import pystray
 from PIL import Image, ImageDraw
+
+
+def _patch_tray_icon_suffix():
+    """GNOME only loads a tray image whose path ends in .png.
+
+    pystray writes a temporary file with no suffix, so the menu item is
+    registered and invisible.
+    """
+    import os
+    import tempfile
+    from pystray._util import gtk as gtk_backend
+
+    def _update_fs_icon(self):
+        fd, path = tempfile.mkstemp(prefix="wisper-", suffix=".png")
+        os.close(fd)
+        self._icon_path = path
+        with open(path, "wb") as handle:
+            self.icon.save(handle, "PNG")
+        self._icon_valid = True
+
+    gtk_backend.GtkIcon._update_fs_icon = _update_fs_icon
+
+
+_patch_tray_icon_suffix()
 
 from audio import Recorder
 from transcriber import Transcriber
@@ -293,23 +347,71 @@ class App:
         if not self.ptt.start():
             log.error("hotkey listener did not start")
             self.icon.notify(
-                "Cannot read the keyboard. Log out and back in so the input group applies.",
+                "Cannot read the keyboard. The input group is not active in this process.",
                 "Wisper",
             )
-            self._set_state("idle", "Wisper - keyboard not readable (log out and back in)")
+            self._set_state("idle", "Wisper - keyboard not readable")
             return
         log.info("ready: hotkey=%s language=%s", self.cfg.hotkey, self.cfg.language)
         self._set_state("idle", self._idle_tip())
+
+    def _pump_tray(self):
+        """Run pending GTK events so the tray icon is actually registered.
+
+        pystray on Linux only queues the icon update. The waveform window owns
+        the main thread, so this timer has to drain the GTK queue or GNOME
+        never shows the menu.
+        """
+        try:
+            from gi.repository import GLib
+            ctx = GLib.MainContext.default()
+            for _ in range(20):
+                if not ctx.pending():
+                    break
+                ctx.iteration(False)
+        except Exception:
+            log.exception("tray event loop stopped")
+            return
+        self.overlay.root.after(50, self._pump_tray)
 
     def run(self):
         self.icon.menu = self._build_menu()
         threading.Thread(target=self._startup, daemon=True).start()
         self.icon.run_detached()
+        self.overlay.root.after(50, self._pump_tray)
         self.overlay.run()
         self.icon.stop()
 
 
+def _ensure_ydotoold() -> None:
+    """Start ydotoold when this OS ships it as its own program.
+
+    Ubuntu 22.04's ydotool 0.1.8 has no ydotoold binary. That client opens
+    /dev/uinput itself, which works once this process is in the input group.
+    """
+    if not shutil.which("ydotoold"):
+        log.info("ydotool client will open /dev/uinput directly")
+        return
+    socket = "/tmp/.ydotool_socket"
+    if os.path.exists(socket):
+        return
+    log.info("starting ydotoold")
+    subprocess.Popen(
+        ["ydotoold"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    for _ in range(30):
+        if os.path.exists(socket):
+            log.info("ydotoold socket ready")
+            return
+        time.sleep(0.1)
+    log.error("ydotoold did not create %s", socket)
+
+
 def main():
+    _ensure_ydotoold()
     App().run()
 
 
