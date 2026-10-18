@@ -1,0 +1,12 @@
+# Linux runtime. System packages (evdev, GTK, AppIndicator, PortAudio) come
+# from apt via install.py. The venv is created with --system-site-packages
+# so pystray can see gi. Do not install the Windows `keyboard` package or the
+# NVIDIA wheels here; install.py adds those wheels only when nvidia-smi works.
+faster-whisper>=1.0.3
+sounddevice>=0.4.6
+numpy>=1.24
+pyperclip>=1.8.2
+pystray>=0.19.5
+Pillow>=10.0
+transformers>=4.40
+huggingface_hub>=0.23

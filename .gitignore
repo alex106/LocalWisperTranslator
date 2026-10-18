@@ -3,7 +3,9 @@ __pycache__/
 *.pyc
 models/
 config.json
+config.linux.json
 wisper.log
+wisper-linux.log
 build/
 dist/
 *.spec

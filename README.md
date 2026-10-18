@@ -36,6 +36,32 @@ focus. Powered by [faster-whisper] (`large-v3`) on your GPU and
 > on accented speech, background noise, or less common languages). Default
 > to `cuda` whenever a GPU is available.
 
+## Linux
+
+`src/` is the Windows app and does not run on Linux. The Linux build is in
+`linux/` and uses the same speech code and `models/` directory.
+
+```bash
+python3 install.py
+```
+
+The installer detects the OS. On Linux it installs the system packages, creates
+`.venv`, downloads a Whisper model plus NLLB, and adds an application-menu
+entry and an autostart entry. Log out and back in once afterwards. Hold-to-talk
+reads `/dev/input`, and the `input` group is only present in a new login. That
+group can read every keystroke on the machine, which is what a global hold-key
+needs.
+
+Launch Wisper from the application menu and hold `Ctrl+Alt+Space`. With no
+NVIDIA GPU the installer selects CPU `int8` and the `small` model. A CUDA GPU
+keeps `large-v3` at `int8_float16`. Linux settings are stored in
+`config.linux.json`, separate from the Windows `config.json`.
+
+Skip the download with `python3 install.py --skip-models`.
+
+On Windows, `python install.py` only creates the virtualenv and installs
+`requirements.txt`. Add `--with-models` there to download weights as well.
+
 ## Setup
 
 ```powershell
