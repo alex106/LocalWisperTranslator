@@ -319,8 +319,17 @@ class App:
             pystray.MenuItem("Check for model updates...", self._check_updates),
             pystray.MenuItem("Edit config file...",
                              lambda icon, item: open_linux_config()),
+            pystray.MenuItem("Reset", self._restart),
             pystray.MenuItem("Quit", self._quit),
         )
+
+    def _restart(self, icon, item):
+        """Start a new Wisper process, then leave so the tray and hotkey reload."""
+        log.info("restart requested")
+        if self.ptt:
+            self.ptt.stop()
+        _spawn_replacement()
+        self._quit(icon, item)
 
     def _quit(self, icon, item):  # noqa: ARG002
         if self.ptt:
@@ -408,6 +417,25 @@ def _ensure_ydotoold() -> None:
             return
         time.sleep(0.1)
     log.error("ydotoold did not create %s", socket)
+
+
+def _spawn_replacement() -> None:
+    """Relaunch this program after a short pause.
+
+    The pause lets this process drop the tray icon and the keyboard
+    devices before the new one claims them.
+    """
+    helper = (
+        "import os, sys, time\n"
+        "time.sleep(0.6)\n"
+        "os.execv(sys.argv[1], sys.argv[1:])\n"
+    )
+    log.info("spawning replacement")
+    subprocess.Popen(
+        [sys.executable, "-c", helper, sys.executable, *sys.argv],
+        cwd=str(ROOT),
+        start_new_session=True,
+    )
 
 
 def main():

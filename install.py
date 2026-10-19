@@ -258,7 +258,7 @@ def install_linux(args: argparse.Namespace) -> None:
     print(f"  App menu:    {app_dir / 'wisper.desktop'}")
     print(f"  Autostart:   {auto_dir / 'wisper.desktop'}")
     print(f"  Config:      {CONFIG_LINUX_PATH}")
-    print(f"  Run now:     {py} {ROOT / 'linux' / 'app.py'}")
+    print(f"  Run now:     {ROOT / 'Wisper.sh'}")
     if args.skip_models:
         print("Models were skipped. Dictation will fail until you download them.")
     print()
