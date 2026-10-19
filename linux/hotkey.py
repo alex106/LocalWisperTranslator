@@ -212,6 +212,14 @@ class PushToTalk:
                     continue
                 except OSError:
                     log.warning("lost input device %s", getattr(dev, "path", dev))
+                    try:
+                        dev.close()
+                    except OSError:
+                        pass
+                    self._devices = [d for d in self._devices if d is not dev]
+                    if not self._devices:
+                        log.error("no keyboard devices left")
+                        return
 
 
 def _self_check() -> None:
