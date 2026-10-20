@@ -99,6 +99,10 @@ class WaveformOverlay:
     def quit(self):
         self._cmds.put("quit")
 
+    def call(self, fn):
+        """Run fn on the Tk thread. Menu callbacks are not that thread."""
+        self._cmds.put(("call", fn))
+
     def run(self):
         """Blocks: runs the Tk mainloop on the calling (main) thread."""
         self.root.mainloop()
@@ -110,6 +114,11 @@ class WaveformOverlay:
                 cmd = self._cmds.get_nowait()
                 if isinstance(cmd, tuple) and cmd[0] == "stage":
                     self._do_set_stage(cmd[1])
+                elif isinstance(cmd, tuple) and cmd[0] == "call":
+                    try:
+                        cmd[1]()
+                    except Exception:
+                        log.exception("overlay call failed")
                 elif cmd == "show":
                     self._do_show()
                 elif cmd == "processing":

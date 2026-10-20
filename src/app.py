@@ -10,7 +10,6 @@ Flow (push-to-talk):
 """
 from __future__ import annotations
 
-import logging
 import os
 import subprocess
 import sys
@@ -26,18 +25,19 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 # Allow `python src/app.py` as well as `python -m app` from src/.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from log_setup import configure_log
+
 LOG_PATH = Path(__file__).resolve().parent.parent / "wisper.log"
-logging.basicConfig(
-    filename=str(LOG_PATH),
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    encoding="utf-8",
-)
-log = logging.getLogger("wisper")
+log = configure_log(LOG_PATH)
 
 import pystray
 from PIL import Image, ImageDraw
 
+import app_info
+from app_info import (
+    about_lines, about_note, check_main_branch, describe_update, show_about,
+    updates_menu_label,
+)
 from config import Config, open_config_file
 from audio import Recorder
 from transcriber import Transcriber
@@ -68,6 +68,7 @@ STATE_COLORS = {
     "recording": (210, 60, 60),
     "transcribing": (230, 170, 40),
 }
+UPDATE_COLOR = (214, 96, 20)
 
 # Language menus are defined in the human-editable languages.json.
 from languages import LANGUAGES, TRANSLATE_TARGETS
@@ -96,6 +97,7 @@ class App:
                                  "Wisper - loading model...")
         self.transcriber: Transcriber | None = None
         self.ptt: PushToTalk | None = None
+        self.update_status: app_info.UpdateStatus | None = None
         self._busy = threading.Lock()
         # Tk overlay lives on the main thread (created here, run() blocks).
         self.overlay = WaveformOverlay(self.recorder)
@@ -106,7 +108,10 @@ class App:
     # --- state / icon ------------------------------------------------------
     def _set_state(self, state: str, tip: str | None = None):
         self.state = state
-        self.icon.icon = _make_icon(STATE_COLORS.get(state, STATE_COLORS["idle"]))
+        color = STATE_COLORS.get(state, STATE_COLORS["idle"])
+        if state == "idle" and self.update_status and self.update_status.update_available:
+            color = UPDATE_COLOR
+        self.icon.icon = _make_icon(color)
         self.icon.title = tip or f"Wisper - {state}"
         self.icon.update_menu()
 
@@ -163,7 +168,10 @@ class App:
 
     def _idle_tip(self) -> str:
         tr = f" -> {self.cfg.translate_to}" if self.cfg.translate else ""
-        return f"Wisper - ready ({self.cfg.hotkey} | {self.cfg.language}{tr})"
+        tip = f"Wisper - ready ({self.cfg.hotkey} | {self.cfg.language}{tr})"
+        if self.update_status and self.update_status.update_available:
+            tip += " | update available"
+        return tip
 
     # --- menu actions ------------------------------------------------------
     def _set_language(self, code):
@@ -212,6 +220,37 @@ class App:
                 self.icon.notify(f"Model load failed: {exc}", "Wisper")
             finally:
                 self._set_state("idle", self._idle_tip())
+
+    def _check_app_updates(self, icon, item):  # noqa: ARG002
+        threading.Thread(target=self._watch_updates, args=(True,), daemon=True).start()
+
+    def _watch_updates(self, notify: bool):
+        if notify:
+            self.icon.notify("Checking main for updates...", "Wisper")
+        root = Path(__file__).resolve().parent.parent
+        try:
+            status = check_main_branch(root)
+            summary = describe_update(status)
+        except Exception as exc:
+            log.exception("app update check failed")
+            status = None
+            summary = f"Update check failed: {exc}"
+        log.info("app update check: %s", summary.replace("\n", " | "))
+        if status is not None:
+            self.update_status = status
+            app_info.menu_update_alert = status.update_available
+        if self.state == "idle":
+            self._set_state("idle", self._idle_tip())
+        else:
+            self.icon.update_menu()
+        if notify:
+            self.icon.notify(summary[:250], "Wisper")
+
+    def _show_about(self, icon, item):  # noqa: ARG002
+        text = about_lines(self.cfg)
+        note = about_note(self.update_status)
+        alert = bool(self.update_status and self.update_status.update_available)
+        self.overlay.call(lambda: show_about(self.overlay.root, text, note, alert))
 
     def _check_updates(self, icon, item):  # noqa: ARG002
         threading.Thread(target=self._run_update_check, daemon=True).start()
@@ -269,7 +308,10 @@ class App:
             pystray.MenuItem("Translation", pystray.Menu(*translate_items)),
             pystray.MenuItem("Model", pystray.Menu(*model_items)),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(lambda item: updates_menu_label(self.update_status),
+                             self._check_app_updates),
             pystray.MenuItem("Check for model updates...", self._check_updates),
+            pystray.MenuItem("About", self._show_about),
             pystray.MenuItem("Edit config file...",
                              lambda icon, item: open_config_file()),
             pystray.MenuItem("Reset", self._restart),
@@ -317,6 +359,7 @@ class App:
     def run(self):
         self.icon.menu = self._build_menu()
         threading.Thread(target=self._startup, daemon=True).start()
+        threading.Thread(target=self._watch_updates, args=(False,), daemon=True).start()
         # Tray runs on its own thread; the Tk overlay owns the main thread.
         self.icon.run_detached()
         self.overlay.run()  # blocks until quit

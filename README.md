@@ -125,11 +125,16 @@ Right-click the tray icon:
   Speech is transcribed, then translated locally by NLLB-200 before pasting.
   If you already spoke the target language, the text passes through unchanged.
 - **Model** — large-v3 (best quality) / medium / small (faster, less VRAM).
-- **Check for model updates…** — the app's **only** online action, and it runs
-  only when you click it: compares your local model revisions against Hugging
-  Face and re-downloads only if a newer revision exists (these models change
-  rarely). Result appears as a notification; restart Wisper after an update.
-  At all other times the app is locked offline (`HF_HUB_OFFLINE=1`).
+- **Check for updates…** — Wisper also runs this when it starts. It fetches
+  `origin/main` and, when that branch has new commits, turns the idle icon
+  orange and colors this menu item orange. It does not download or switch
+  branches. Choosing the item shows the result as a notification.
+- **Check for model updates…** — compares your local model revisions against
+  Hugging Face and re-downloads only if a newer revision exists (these models
+  change rarely). Result appears as a notification; restart Wisper after an
+  update. At all other times the app is locked offline (`HF_HUB_OFFLINE=1`).
+- **About** — version, model, whether dictation is running on CPU or GPU,
+  plus the latest version on `main` and the date of that update.
 - **Edit config file…** — opens `config.json`.
 - **Quit** — stops the app.
 

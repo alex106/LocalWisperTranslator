@@ -5,7 +5,6 @@ window that already has focus. The overlay never takes focus.
 """
 from __future__ import annotations
 
-import logging
 import os
 import shlex
 import shutil
@@ -53,15 +52,16 @@ def _reexec_with_input_group() -> None:
 
 _reexec_with_input_group()
 
-LOG_PATH = ROOT / "wisper-linux.log"
-logging.basicConfig(
-    filename=str(LOG_PATH),
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    encoding="utf-8",
-)
-log = logging.getLogger("wisper")
+from log_setup import configure_log
 
+LOG_PATH = ROOT / "wisper-linux.log"
+log = configure_log(LOG_PATH)
+
+import app_info
+from app_info import (
+    about_lines, about_note, check_main_branch, describe_update, show_about,
+    updates_menu_label,
+)
 from settings import LinuxConfig, open_linux_config, prepare_cuda_libraries
 
 _cfg = LinuxConfig.load()
@@ -93,7 +93,31 @@ def _patch_tray_icon_suffix():
     gtk_backend.GtkIcon._update_fs_icon = _update_fs_icon
 
 
+def _patch_update_menu_color():
+    """Paint the update item orange when main has commits this copy lacks.
+
+    GNOME draws the tray menu from these GTK labels. A plain MenuItem has
+    no color argument, so the label markup carries the color.
+    """
+    from gi.repository import GLib
+    from pystray._util import gtk as gtk_backend
+
+    original = gtk_backend.GtkIcon._create_menu_item
+
+    def _create_menu_item(self, descriptor):
+        item = original(self, descriptor)
+        text = getattr(descriptor, "text", "") or ""
+        if app_info.menu_update_alert and text.startswith("Check for updates"):
+            label = item.get_children()[0]
+            safe = GLib.markup_escape_text(text)
+            label.set_markup(f'<span foreground="{app_info.UPDATE_ORANGE}">{safe}</span>')
+        return item
+
+    gtk_backend.GtkIcon._create_menu_item = _create_menu_item
+
+
 _patch_tray_icon_suffix()
+_patch_update_menu_color()
 
 from audio import Recorder
 from transcriber import Transcriber
@@ -109,6 +133,7 @@ STATE_COLORS = {
     "recording": (210, 60, 60),
     "transcribing": (230, 170, 40),
 }
+UPDATE_COLOR = (214, 96, 20)
 
 MODELS = ["large-v3", "medium", "small"]
 
@@ -154,6 +179,7 @@ class App:
                                  "Wisper - loading model...")
         self.transcriber: Transcriber | None = None
         self.ptt: PushToTalk | None = None
+        self.update_status: app_info.UpdateStatus | None = None
         self._busy = threading.Lock()
         self.overlay = WaveformOverlay(self.recorder)
         nllb_dir = self.cfg.translator_dir or (ROOT / "models" / "nllb-200-600m")
@@ -161,7 +187,10 @@ class App:
 
     def _set_state(self, state: str, tip: str | None = None):
         self.state = state
-        self.icon.icon = _make_icon(STATE_COLORS.get(state, STATE_COLORS["idle"]))
+        color = STATE_COLORS.get(state, STATE_COLORS["idle"])
+        if state == "idle" and self.update_status and self.update_status.update_available:
+            color = UPDATE_COLOR
+        self.icon.icon = _make_icon(color)
         self.icon.title = tip or f"Wisper - {state}"
         self.icon.update_menu()
 
@@ -215,7 +244,10 @@ class App:
 
     def _idle_tip(self) -> str:
         tr = f" -> {self.cfg.translate_to}" if self.cfg.translate else ""
-        return f"Wisper - ready ({self.cfg.hotkey} | {self.cfg.language}{tr})"
+        tip = f"Wisper - ready ({self.cfg.hotkey} | {self.cfg.language}{tr})"
+        if self.update_status and self.update_status.update_available:
+            tip += " | update available"
+        return tip
 
     def _set_language(self, code):
         def handler(icon, item):  # noqa: ARG001
@@ -264,6 +296,36 @@ class App:
                 self.icon.notify(f"Model load failed: {exc}", "Wisper")
             finally:
                 self._set_state("idle", self._idle_tip())
+
+    def _check_app_updates(self, icon, item):  # noqa: ARG002
+        threading.Thread(target=self._watch_updates, args=(True,), daemon=True).start()
+
+    def _watch_updates(self, notify: bool):
+        if notify:
+            self.icon.notify("Checking main for updates...", "Wisper")
+        try:
+            status = check_main_branch(ROOT)
+            summary = describe_update(status)
+        except Exception as exc:
+            log.exception("app update check failed")
+            status = None
+            summary = f"Update check failed: {exc}"
+        log.info("app update check: %s", summary.replace("\n", " | "))
+        if status is not None:
+            self.update_status = status
+            app_info.menu_update_alert = status.update_available
+        if self.state == "idle":
+            self._set_state("idle", self._idle_tip())
+        else:
+            self.icon.update_menu()
+        if notify:
+            self.icon.notify(summary[:250], "Wisper")
+
+    def _show_about(self, icon, item):  # noqa: ARG002
+        text = about_lines(self.cfg)
+        note = about_note(self.update_status)
+        alert = bool(self.update_status and self.update_status.update_available)
+        self.overlay.call(lambda: show_about(self.overlay.root, text, note, alert))
 
     def _check_updates(self, icon, item):  # noqa: ARG002
         threading.Thread(target=self._run_update_check, daemon=True).start()
@@ -316,7 +378,10 @@ class App:
             pystray.MenuItem("Translation", pystray.Menu(*translate_items)),
             pystray.MenuItem("Model", pystray.Menu(*model_items)),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(lambda item: updates_menu_label(self.update_status),
+                             self._check_app_updates),
             pystray.MenuItem("Check for model updates...", self._check_updates),
+            pystray.MenuItem("About", self._show_about),
             pystray.MenuItem("Edit config file...",
                              lambda icon, item: open_linux_config()),
             pystray.MenuItem("Reset", self._restart),
@@ -386,6 +451,7 @@ class App:
     def run(self):
         self.icon.menu = self._build_menu()
         threading.Thread(target=self._startup, daemon=True).start()
+        threading.Thread(target=self._watch_updates, args=(False,), daemon=True).start()
         self.icon.run_detached()
         self.overlay.root.after(50, self._pump_tray)
         self.overlay.run()
